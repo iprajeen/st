@@ -80,6 +80,7 @@ typedef union {
 
 void die(const char *, ...);
 void redraw(void);
+void tfulldirt(void);
 void draw(void);
 
 void printscreen(const Arg *);
@@ -133,3 +134,4 @@ extern unsigned int tabspaces;
 extern unsigned int defaultfg;
 extern unsigned int defaultbg;
 extern const int boxdraw, boxdraw_bold, boxdraw_braille;
+extern float alpha, alphaUnfocused;
