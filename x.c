@@ -792,11 +792,11 @@ xloadcols(void)
 {
 	static int loaded;
 	Color *cp;
-	
+
 	if (!loaded) {
 		dc.collen = 1 + (defaultbg = MAX(LEN(colorname), 256));
 		dc.col = xmalloc((dc.collen) * sizeof(Color));
- 	}
+	}
 
 	for (int i = 0; i+1 < dc.collen; ++i)
 		if (!xloadcolor(i, NULL, &dc.col[i])) {
@@ -1122,7 +1122,7 @@ xinit(int cols, int rows)
 	if (!(xw.dpy = XOpenDisplay(NULL)))
 		die("can't open display\n");
 	xw.scr = XDefaultScreen(xw.dpy);
-	
+
 	if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0)))) {
 		parent = XRootWindow(xw.dpy, xw.scr);
 		xw.depth = 32;

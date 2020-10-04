@@ -1,0 +1,227 @@
+diff --git a/config.def.h b/config.def.h
+index c3f8fab..a833b13 100755
+--- a/config.def.h
++++ b/config.def.h
+@@ -93,6 +93,10 @@ char *termname = "st-256color";
+  */
+ unsigned int tabspaces = 8;
+ 
++/* bg opacity */
++float alpha = 0.8;
++float alphaUnfocused = 0.6;
++
+ /* Terminal colors (16 first used in escape sequence) */
+ static const char *colorname[] = {
+ 	/* 8 normal colors */
+diff --git a/config.mk b/config.mk
+index c070a4a..ccba096 100755
+--- a/config.mk
++++ b/config.mk
+@@ -16,7 +16,7 @@ PKG_CONFIG = pkg-config
+ INCS = -I$(X11INC) \
+        `$(PKG_CONFIG) --cflags fontconfig` \
+        `$(PKG_CONFIG) --cflags freetype2`
+-LIBS = -L$(X11LIB) -lm -lrt -lX11 -lutil -lXft \
++LIBS = -L$(X11LIB) -lm -lrt -lX11 -lutil -lXft -lXrender \
+        `$(PKG_CONFIG) --libs fontconfig` \
+        `$(PKG_CONFIG) --libs freetype2`
+ 
+diff --git a/st.c b/st.c
+index 76b7e0d..33c168a 100755
+--- a/st.c
++++ b/st.c
+@@ -193,7 +193,6 @@ static void tsetscroll(int, int);
+ static void tswapscreen(void);
+ static void tsetmode(int, int, int *, int);
+ static int twrite(const char *, int, int);
+-static void tfulldirt(void);
+ static void tcontrolcode(uchar );
+ static void tdectest(char );
+ static void tdefutf8(char);
+@@ -994,7 +993,7 @@ tsetdirtattr(int attr)
+ void
+ tfulldirt(void)
+ {
+-	tsetdirt(0, term.row-1);
++	tsetdirt(0, term.row - 1);
+ }
+ 
+ void
+diff --git a/st.h b/st.h
+index 8d26273..116214c 100755
+--- a/st.h
++++ b/st.h
+@@ -80,6 +80,7 @@ typedef union {
+ 
+ void die(const char *, ...);
+ void redraw(void);
++void tfulldirt(void);
+ void draw(void);
+ 
+ void printscreen(const Arg *);
+@@ -133,3 +134,4 @@ extern unsigned int tabspaces;
+ extern unsigned int defaultfg;
+ extern unsigned int defaultbg;
+ extern const int boxdraw, boxdraw_bold, boxdraw_braille;
++extern float alpha, alphaUnfocused;
+diff --git a/x.c b/x.c
+index e9d5dfa..7141e47 100755
+--- a/x.c
++++ b/x.c
+@@ -105,6 +105,7 @@ typedef struct {
+ 	XSetWindowAttributes attrs;
+ 	int scr;
+ 	int isfixed; /* is fixed geometry? */
++	int depth; /* bit depth */
+ 	int l, t; /* left and top offset */
+ 	int gm; /* geometry mask */
+ } XWindow;
+@@ -243,6 +244,7 @@ static char *usedfont = NULL;
+ static double usedfontsize = 0;
+ static double defaultfontsize = 0;
+ 
++static char *opt_alpha = NULL;
+ static char *opt_class = NULL;
+ static char **opt_cmd  = NULL;
+ static char *opt_embed = NULL;
+@@ -252,6 +254,8 @@ static char *opt_line  = NULL;
+ static char *opt_name  = NULL;
+ static char *opt_title = NULL;
+ 
++static int focused = 0;
++
+ static int oldbutton = 3; /* button event on startup: 3 = release */
+ 
+ void
+@@ -734,7 +738,7 @@ xresize(int col, int row)
+ 
+ 	XFreePixmap(xw.dpy, xw.buf);
+ 	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
+-			DefaultDepth(xw.dpy, xw.scr));
++			xw.depth);
+ 	XftDrawChange(xw.draw, xw.buf);
+ 	xclear(0, 0, win.w, win.h);
+ 
+@@ -772,28 +776,37 @@ xloadcolor(int i, const char *name, Color *ncolor)
+ 	return XftColorAllocName(xw.dpy, xw.vis, xw.cmap, name, ncolor);
+ }
+ 
++void
++xloadalpha(void)
++{
++	float const usedAlpha = focused ? alpha : alphaUnfocused;
++	if (opt_alpha)
++		alpha = strtof(opt_alpha, NULL);
++	dc.col[defaultbg].color.alpha = (unsigned short)(0xffff * usedAlpha);
++	dc.col[defaultbg].pixel &= 0x00ffffff;
++	dc.col[defaultbg].pixel |= (unsigned char)(0xff * usedAlpha) << 24;
++}
++
+ void
+ xloadcols(void)
+ {
+-	int i;
+ 	static int loaded;
+ 	Color *cp;
+ 
+-	if (loaded) {
+-		for (cp = dc.col; cp < &dc.col[dc.collen]; ++cp)
+-			XftColorFree(xw.dpy, xw.vis, xw.cmap, cp);
+-	} else {
+-		dc.collen = MAX(LEN(colorname), 256);
+-		dc.col = xmalloc(dc.collen * sizeof(Color));
++	if (!loaded) {
++		dc.collen = 1 + (defaultbg = MAX(LEN(colorname), 256));
++		dc.col = xmalloc((dc.collen) * sizeof(Color));
+ 	}
+ 
+-	for (i = 0; i < dc.collen; i++)
++	for (int i = 0; i+1 < dc.collen; ++i)
+ 		if (!xloadcolor(i, NULL, &dc.col[i])) {
+ 			if (colorname[i])
+ 				die("could not allocate color '%s'\n", colorname[i]);
+ 			else
+ 				die("could not allocate color %d\n", i);
+ 		}
++
++	xloadalpha();
+ 	loaded = 1;
+ }
+ 
+@@ -1103,11 +1116,23 @@ xinit(int cols, int rows)
+ 	Window parent;
+ 	pid_t thispid = getpid();
+ 	XColor xmousefg, xmousebg;
++	XWindowAttributes attr;
++	XVisualInfo vis;
+ 
+ 	if (!(xw.dpy = XOpenDisplay(NULL)))
+ 		die("can't open display\n");
+ 	xw.scr = XDefaultScreen(xw.dpy);
+-	xw.vis = XDefaultVisual(xw.dpy, xw.scr);
++
++	if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0)))) {
++		parent = XRootWindow(xw.dpy, xw.scr);
++		xw.depth = 32;
++	} else {
++		XGetWindowAttributes(xw.dpy, parent, &attr);
++		xw.depth = attr.depth;
++	}
++
++	XMatchVisualInfo(xw.dpy, xw.scr, xw.depth, TrueColor, &vis);
++	xw.vis = vis.visual;
+ 
+ 	/* font */
+ 	if (!FcInit())
+@@ -1117,7 +1142,7 @@ xinit(int cols, int rows)
+ 	xloadfonts(usedfont, 0);
+ 
+ 	/* colors */
+-	xw.cmap = XDefaultColormap(xw.dpy, xw.scr);
++	xw.cmap = XCreateColormap(xw.dpy, parent, xw.vis, None);
+ 	xloadcols();
+ 
+ 	/* adjust fixed window geometry */
+@@ -1137,19 +1162,15 @@ xinit(int cols, int rows)
+ 		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
+ 	xw.attrs.colormap = xw.cmap;
+ 
+-	if (!(opt_embed && (parent = strtol(opt_embed, NULL, 0))))
+-		parent = XRootWindow(xw.dpy, xw.scr);
+ 	xw.win = XCreateWindow(xw.dpy, parent, xw.l, xw.t,
+-			win.w, win.h, 0, XDefaultDepth(xw.dpy, xw.scr), InputOutput,
++			win.w, win.h, 0, xw.depth, InputOutput,
+ 			xw.vis, CWBackPixel | CWBorderPixel | CWBitGravity
+ 			| CWEventMask | CWColormap, &xw.attrs);
+ 
+ 	memset(&gcvalues, 0, sizeof(gcvalues));
+ 	gcvalues.graphics_exposures = False;
+-	dc.gc = XCreateGC(xw.dpy, parent, GCGraphicsExposures,
+-			&gcvalues);
+-	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h,
+-			DefaultDepth(xw.dpy, xw.scr));
++	xw.buf = XCreatePixmap(xw.dpy, xw.win, win.w, win.h, xw.depth);
++	dc.gc = XCreateGC(xw.dpy, xw.buf, GCGraphicsExposures, &gcvalues);
+ 	XSetForeground(xw.dpy, dc.gc, dc.col[defaultbg].pixel);
+ 	XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, win.w, win.h);
+ 
+@@ -1748,6 +1769,9 @@ focus(XEvent *ev)
+ 		if (IS_SET(MODE_FOCUS))
+ 			ttywrite("\033[O", 3, 0);
+ 	}
++	focused = focused ? 0 : 1;
++	xloadcols();
++	tfulldirt();
+ }
+ 
+ int
+@@ -1999,6 +2023,9 @@ main(int argc, char *argv[])
+ 	case 'a':
+ 		allowaltscreen = 0;
+ 		break;
++	case 'A':
++		opt_alpha = EARGF(usage());
++		break;
+ 	case 'c':
+ 		opt_class = EARGF(usage());
+ 		break;
