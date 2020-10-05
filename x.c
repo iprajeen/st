@@ -1772,16 +1772,23 @@ focus(XEvent *ev)
 		xseturgency(0);
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[I", 3, 0);
+		if (!focused) {
+			focused = 1;
+			xloadcols();
+			tfulldirt();
+		}
 	} else {
 		if (xw.ime.xic)
 			XUnsetICFocus(xw.ime.xic);
 		win.mode &= ~MODE_FOCUSED;
 		if (IS_SET(MODE_FOCUS))
 			ttywrite("\033[O", 3, 0);
+		if (focused) {
+			focused = 0;
+			xloadcols();
+			tfulldirt();
+		}
 	}
-	focused = focused ? 0 : 1;
-	xloadcols();
-	tfulldirt();
 }
 
 int

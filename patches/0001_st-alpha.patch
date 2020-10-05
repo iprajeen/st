@@ -65,7 +65,7 @@ index 8d26273..116214c 100755
  extern const int boxdraw, boxdraw_bold, boxdraw_braille;
 +extern float alpha, alphaUnfocused;
 diff --git a/x.c b/x.c
-index e9d5dfa..7141e47 100755
+index e9d5dfa..ec5fd0e 100755
 --- a/x.c
 +++ b/x.c
 @@ -105,6 +105,7 @@ typedef struct {
@@ -205,17 +205,30 @@ index e9d5dfa..7141e47 100755
  	XSetForeground(xw.dpy, dc.gc, dc.col[defaultbg].pixel);
  	XFillRectangle(xw.dpy, xw.buf, dc.gc, 0, 0, win.w, win.h);
  
-@@ -1748,6 +1769,9 @@ focus(XEvent *ev)
+@@ -1741,12 +1762,22 @@ focus(XEvent *ev)
+ 		xseturgency(0);
+ 		if (IS_SET(MODE_FOCUS))
+ 			ttywrite("\033[I", 3, 0);
++		if (!focused) {
++			focused = 1;
++			xloadcols();
++			tfulldirt();
++		}
+ 	} else {
+ 		if (xw.ime.xic)
+ 			XUnsetICFocus(xw.ime.xic);
+ 		win.mode &= ~MODE_FOCUSED;
  		if (IS_SET(MODE_FOCUS))
  			ttywrite("\033[O", 3, 0);
++		if (focused) {
++			focused = 0;
++			xloadcols();
++			tfulldirt();
++		}
  	}
-+	focused = focused ? 0 : 1;
-+	xloadcols();
-+	tfulldirt();
  }
  
- int
-@@ -1999,6 +2023,9 @@ main(int argc, char *argv[])
+@@ -1999,6 +2030,9 @@ main(int argc, char *argv[])
  	case 'a':
  		allowaltscreen = 0;
  		break;
